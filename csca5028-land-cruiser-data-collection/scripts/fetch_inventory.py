@@ -155,9 +155,20 @@ def save_records(records: list[dict[str, Any]]) -> int:
     inserted = 0
     now = datetime.now(timezone.utc).isoformat()
 
+    exists_sql = text(
+        """
+        SELECT 1
+        FROM raw_inventory
+        WHERE source = :source
+          AND external_id = :external_id
+          AND model_year = :model_year
+        LIMIT 1
+        """
+    )
+
     insert_sql = text(
         """
-        INSERT OR IGNORE INTO raw_inventory
+        INSERT INTO raw_inventory
         (source, external_id, make_name, model_name, model_year, payload_json, fetched_at)
         VALUES
         (:source, :external_id, :make_name, :model_name, :model_year, :payload_json, :fetched_at)
@@ -166,19 +177,29 @@ def save_records(records: list[dict[str, Any]]) -> int:
 
     with SessionLocal.begin() as session:
         for rec in records:
-            result = session.execute(
-                insert_sql,
+            params = {
+                "source": rec["source"],
+                "external_id": rec["external_id"],
+                "make_name": rec["make_name"],
+                "model_name": rec["model_name"],
+                "model_year": int(rec["model_year"]),
+                "payload_json": rec["payload_json"],
+                "fetched_at": now,
+            }
+
+            exists = session.execute(
+                exists_sql,
                 {
-                    "source": rec["source"],
-                    "external_id": rec["external_id"],
-                    "make_name": rec["make_name"],
-                    "model_name": rec["model_name"],
-                    "model_year": int(rec["model_year"]),
-                    "payload_json": rec["payload_json"],
-                    "fetched_at": now,
+                    "source": params["source"],
+                    "external_id": params["external_id"],
+                    "model_year": params["model_year"],
                 },
-            )
-            inserted += result.rowcount
+            ).first()
+            if exists:
+                continue
+
+            session.execute(insert_sql, params)
+            inserted += 1
     return inserted
 
 
