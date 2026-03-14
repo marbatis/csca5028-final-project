@@ -9,7 +9,10 @@ This repository contains the data components of the capstone project:
 ## Architecture (high level)
 
 ```text
-External APIs (NHTSA vPIC, NHTSA Recalls, FuelEconomy.gov)
+External listing sources + APIs
+  - Bring a Trailer (auction listings)
+  - ClassicCars.com (classified listings)
+  - NHTSA / FuelEconomy supporting signals
         |
         v
 Collector -----------------> RabbitMQ (inventory_events)
@@ -21,11 +24,13 @@ SQLite raw_inventory            Event Consumer / Downstream services
 Analyzer (counts, averages, trends)
 ```
 
-## External APIs used
+## External sources used
 
 - `https://vpic.nhtsa.dot.gov/api/vehicles/GetModelsForMakeYear/make/toyota/modelyear/{year}?format=json`
 - `https://api.nhtsa.gov/recalls/recallsByVehicle?make=TOYOTA&model=LAND%20CRUISER&modelYear={year}`
 - `https://www.fueleconomy.gov/ws/rest/vehicle/menu/model?year={year}&make=Toyota`
+- `https://bringatrailer.com/auctions/?search={year}+toyota+land+cruiser`
+- `https://www.classiccars.com/listings/find/{year}/toyota/land-cruiser`
 
 ## Database
 
@@ -77,8 +82,8 @@ python scripts/fetch_inventory.py
 
 Optional environment variables:
 
-- `YEAR_START` (default: `1980`)
-- `YEAR_END` (default: `1990`)
+- `YEAR_START` (default: `1980`, recommended: `1987`)
+- `YEAR_END` (default: `1990`, recommended: `1987`)
 - `EVENT_COLLAB_ENABLED=1` to publish RabbitMQ events
 
 ## Event collaboration (RabbitMQ)

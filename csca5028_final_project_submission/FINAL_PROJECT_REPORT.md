@@ -4,7 +4,7 @@
 The '87 Land Cruiser Finder: Event-Driven Data Pipeline and Web Application
 
 ## 1. Product Overview
-The project delivers a production-oriented system for collectors and buyers who want focused information about Toyota Land Cruiser inventory (with emphasis on classic years including 1987). The system continuously ingests vehicle-related data from external online APIs, stores raw records, computes analysis rollups, and serves results through a deployed web application and REST endpoints.
+The project delivers a production-oriented system for collectors and buyers who want focused information about **actual Toyota Land Cruiser listing opportunities** (with strict emphasis on model year 1987 in the deployed web app). The system continuously ingests listing and vehicle-context data from external online sources, stores raw records, computes analysis rollups, and serves results through a deployed web application and REST endpoints.
 
 The architecture intentionally separates responsibilities into independent processes:
 
@@ -23,12 +23,12 @@ The architecture intentionally separates responsibilities into independent proce
 ## 3. High-Level Architecture
 
 ```text
-                     +------------------------------+
-                     |  External APIs (online)      |
-                     |  - NHTSA vPIC models         |
-                     |  - NHTSA recalls             |
-                     |  - FuelEconomy model menu    |
-                     +--------------+---------------+
+                     +-------------------------------------------+
+                     |  External Online Sources                  |
+                     |  - Bring a Trailer (auction listings)     |
+                     |  - ClassicCars.com (classified listings)  |
+                     |  - NHTSA/FuelEconomy (context signals)    |
+                     +-------------------+-----------------------+
                                     |
                                     v
                      +------------------------------+
@@ -70,7 +70,7 @@ User/browser <--------------->| Web App (Flask, stateless)  |
 ## 4. Key Design Decisions and Trade-offs
 
 ### Decision A: Multi-source online ingestion
-The collector fetches from multiple public online APIs (NHTSA models, NHTSA recalls, FuelEconomy model menu) instead of a single endpoint.
+The collector fetches from multiple online sources (Bring a Trailer listings, ClassicCars.com listings, plus NHTSA/FuelEconomy contextual APIs) instead of a single endpoint.
 
 - **Why**: improves coverage and resilience when one source is sparse or temporarily unavailable.
 - **Trade-off**: requires source-specific parsing and normalized persistence schema.
@@ -107,7 +107,7 @@ GitHub Actions workflows are included for CI tests and CD deploy flow to Heroku 
 3. User can verify the app is healthy and monitored in production.
 
 ### System Requirements
-1. Collector must fetch data from external online APIs.
+1. Collector must fetch data from external online sources (including real listing sources).
 2. Collector must store normalized raw records in shared persistence.
 3. Analyzer must compute rollup summaries.
 4. Event collaboration messaging must be supported through a broker.
@@ -134,9 +134,9 @@ GitHub Actions workflows are included for CI tests and CD deploy flow to Heroku 
 
 ## 7. Validation Summary
 
-- Web app tests: **11 passed**.
-- Collector tests: **3 passed**.
-- Multi-source collection run verified with inserts and per-source counts.
+- Web app tests: **13 passed**.
+- Collector tests: **5 passed**.
+- Multi-source collection run verified with marketplace inserts and per-source counts.
 - Analyzer outputs total counts, year distribution, top models, and per-source distribution.
 - Deployed app exposes reporting UI and operational endpoints.
 

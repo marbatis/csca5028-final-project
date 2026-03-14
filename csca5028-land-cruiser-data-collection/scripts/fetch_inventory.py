@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -22,6 +23,8 @@ from collector.eventing import publish_collection_completed
 SOURCE_NHTSA_VPIC = "NHTSA_vPIC_MODELS"
 SOURCE_NHTSA_RECALLS = "NHTSA_RECALLS"
 SOURCE_FUEL_ECONOMY = "FUEL_ECONOMY_MENU"
+SOURCE_BAT_LISTINGS = "BAT_LISTINGS"
+SOURCE_CLASSICCARS_LISTINGS = "CLASSICCARS_LISTINGS"
 
 VPIC_URL_TEMPLATE = (
     "https://vpic.nhtsa.dot.gov/api/vehicles/"
@@ -33,6 +36,19 @@ RECALLS_URL_TEMPLATE = (
 )
 FUEL_MODEL_MENU_TEMPLATE = (
     "https://www.fueleconomy.gov/ws/rest/vehicle/menu/model?year={year}&make=Toyota"
+)
+BAT_AUCTIONS_SEARCH_TEMPLATE = "https://bringatrailer.com/auctions/?search={year}+toyota+land+cruiser"
+CLASSICCARS_SEARCH_TEMPLATE = "https://www.classiccars.com/listings/find/{year}/toyota/land-cruiser"
+CLASSICCARS_BASE_URL = "https://www.classiccars.com"
+
+BAT_LISTING_PATTERN = re.compile(
+    r'"title":"(?P<title>[^"]+)","url":"(?P<url>https:[\\\/]+bringatrailer\.com[\\\/]+listing[\\\/]+[^"]+)"'
+    r'.*?"year":"(?P<year>[0-9]{4})","id":(?P<id>[0-9]+)',
+    re.S,
+)
+CLASSICCARS_JSONLD_PATTERN = re.compile(
+    r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>',
+    re.S,
 )
 
 DEFAULT_YEAR_START = 1980
@@ -59,6 +75,111 @@ def get_text(url: str) -> str:
     response = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS, headers=REQUEST_HEADERS)
     response.raise_for_status()
     return response.text
+
+
+def decode_json_escaped(value: str) -> str:
+    try:
+        return json.loads(f'"{value}"')
+    except Exception:
+        return value
+
+
+def fetch_bat_listing_records_for_year(year: int) -> list[dict[str, Any]]:
+    html = get_text(BAT_AUCTIONS_SEARCH_TEMPLATE.format(year=year))
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for match in BAT_LISTING_PATTERN.finditer(html):
+        listing_year = int(match.group("year"))
+        if listing_year != year:
+            continue
+
+        title = decode_json_escaped(match.group("title")).strip()
+        if "LAND CRUISER" not in title.upper():
+            continue
+
+        listing_id = match.group("id").strip()
+        if not listing_id or listing_id in seen_ids:
+            continue
+        seen_ids.add(listing_id)
+
+        listing_url = match.group("url").replace("\\/", "/").strip()
+        payload = {
+            "marketplace": "Bring a Trailer",
+            "title": title,
+            "url": listing_url,
+            "year": listing_year,
+            "listing_id": listing_id,
+        }
+        records.append(
+            {
+                "source": SOURCE_BAT_LISTINGS,
+                "external_id": f"BAT-{listing_id}",
+                "make_name": "TOYOTA",
+                "model_name": title,
+                "model_year": listing_year,
+                "payload_json": json.dumps(payload, ensure_ascii=True),
+            }
+        )
+    return records
+
+
+def fetch_classiccars_listing_records_for_year(year: int) -> list[dict[str, Any]]:
+    html = get_text(CLASSICCARS_SEARCH_TEMPLATE.format(year=year))
+    blocks = CLASSICCARS_JSONLD_PATTERN.findall(html)
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    for block in blocks:
+        try:
+            payload = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+
+        model_year_raw = str(payload.get("modelDate", "")).strip()
+        if model_year_raw != str(year):
+            continue
+
+        manufacturer = str(payload.get("manufacturer", "")).strip().upper()
+        model = str(payload.get("model", "")).strip().upper()
+        name = str(payload.get("name", "")).strip()
+        if "TOYOTA" not in manufacturer or "LAND CRUISER" not in f"{model} {name}".upper():
+            continue
+
+        listing_id = str(payload.get("sku", "")).strip()
+        if not listing_id or listing_id in seen_ids:
+            continue
+        seen_ids.add(listing_id)
+
+        offers = payload.get("offers", {})
+        listing_url = ""
+        if isinstance(offers, dict):
+            listing_url = str(offers.get("url", "")).strip()
+        if listing_url.startswith("/"):
+            listing_url = f"{CLASSICCARS_BASE_URL}{listing_url}"
+        if not listing_url:
+            continue
+
+        normalized_payload = {
+            "marketplace": "ClassicCars.com",
+            "title": name,
+            "url": listing_url,
+            "year": year,
+            "listing_id": listing_id,
+            "price": offers.get("price") if isinstance(offers, dict) else None,
+            "price_currency": offers.get("priceCurrency") if isinstance(offers, dict) else None,
+        }
+        records.append(
+            {
+                "source": SOURCE_CLASSICCARS_LISTINGS,
+                "external_id": listing_id,
+                "make_name": "TOYOTA",
+                "model_name": name or "Toyota Land Cruiser",
+                "model_year": year,
+                "payload_json": json.dumps(normalized_payload, ensure_ascii=True),
+            }
+        )
+    return records
 
 
 def fetch_vpic_records_for_year(year: int) -> list[dict[str, Any]]:
@@ -134,6 +255,8 @@ def fetch_fuel_economy_records_for_year(year: int) -> list[dict[str, Any]]:
 
 def fetch_all_source_records_for_year(year: int) -> list[dict[str, Any]]:
     per_source_fetchers = (
+        (SOURCE_CLASSICCARS_LISTINGS, fetch_classiccars_listing_records_for_year),
+        (SOURCE_BAT_LISTINGS, fetch_bat_listing_records_for_year),
         (SOURCE_NHTSA_VPIC, fetch_vpic_records_for_year),
         (SOURCE_NHTSA_RECALLS, fetch_recall_records_for_year),
         (SOURCE_FUEL_ECONOMY, fetch_fuel_economy_records_for_year),

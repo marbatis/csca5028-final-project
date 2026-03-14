@@ -19,7 +19,9 @@ https://csca5028-echo-mb-final-0313-6f06d76737c3.herokuapp.com/
    - CI/CD workflows (`.github/workflows/ci.yml`, `.github/workflows/cd.yml`)
 
 2. `csca5028-land-cruiser-data-collection`
-   - collector (multi-source external API ingestion)
+   - collector (multi-source online ingestion)
+   - marketplace listing ingestion (Bring a Trailer + ClassicCars.com)
+   - supporting API ingestion (NHTSA + FuelEconomy)
    - analyzer (summary metrics)
    - optional RabbitMQ event collaboration (`producer` + `consumer`)
    - scheduled collection support (loop mode + cron/Heroku Scheduler command)
