@@ -47,6 +47,17 @@ def main() -> None:
             text("SELECT MIN(model_year), MAX(model_year) FROM raw_inventory")
         ).one()
 
+        per_source_rows = session.execute(
+            text(
+                """
+                SELECT source, COUNT(*) AS row_count
+                FROM raw_inventory
+                GROUP BY source
+                ORDER BY source
+                """
+            )
+        ).all()
+
     avg_per_year = (total_rows / distinct_years) if distinct_years else 0.0
 
     print("Analysis summary")
@@ -61,6 +72,10 @@ def main() -> None:
     print("- Top model names:")
     for row in top_models:
         print(f"  - {row.model_name}: {row.row_count}")
+
+    print("- Records by source:")
+    for row in per_source_rows:
+        print(f"  - {row.source}: {row.row_count}")
 
 
 if __name__ == "__main__":

@@ -12,14 +12,17 @@ https://csca5028-echo-mb-final-0313-6f06d76737c3.herokuapp.com/
 
 1. `csca5028-webapp-echo`
    - Flask web app
-   - `/echo` endpoint
-   - `/health` endpoint for monitoring
-   - unit and integration tests
+   - reporting UI (filters, summary cards, inventory table)
+   - REST endpoints: `/api/v1/inventory`, `/api/v1/summary`
+   - monitoring endpoints: `/health`, `/metrics`
+   - unit + integration tests (including mock usage)
+   - CI/CD workflows (`.github/workflows/ci.yml`, `.github/workflows/cd.yml`)
 
 2. `csca5028-land-cruiser-data-collection`
-   - collector (external API ingestion)
+   - collector (multi-source external API ingestion)
    - analyzer (summary metrics)
    - optional RabbitMQ event collaboration (`producer` + `consumer`)
+   - scheduled collection support (loop mode + cron/Heroku Scheduler command)
    - schema migration and data scripts
 
 3. `csca5028_final_project_submission`
@@ -46,6 +49,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ./scripts/run_pipeline.sh
+```
+
+### Scheduled collector (frequent runs)
+
+```bash
+cd csca5028-land-cruiser-data-collection
+MODE=loop COLLECT_INTERVAL_MINUTES=60 ./scripts/run_collector.sh
 ```
 
 ### Optional event collaboration (RabbitMQ)

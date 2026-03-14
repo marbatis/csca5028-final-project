@@ -1,97 +1,155 @@
 # CSCA 5028 Final Project Report
 
 ## Project Title
-The '87 Land Cruiser Finder: Collector, Analyzer, and Event-Driven Collaboration
+The '87 Land Cruiser Finder: Event-Driven Data Pipeline and Web Application
 
-## 1. High-level Description
-This project builds a focused data product for 1987 Toyota Land Cruiser buyers and collectors. The system collects listing-related vehicle data from an external API, stores raw records in a shared database, runs analysis to produce summary insights, and exposes a deployed web interface for user interaction.
+## 1. Product Overview
+The project delivers a production-oriented system for collectors and buyers who want focused information about Toyota Land Cruiser inventory (with emphasis on classic years including 1987). The system continuously ingests vehicle-related data from external online APIs, stores raw records, computes analysis rollups, and serves results through a deployed web application and REST endpoints.
 
-The project is intentionally split into independent components so each process can scale and evolve separately:
+The architecture intentionally separates responsibilities into independent processes:
 
-1. Web application (user-facing)
-2. Data collector (scheduled API ingestion)
-3. Data analyzer (aggregation and reporting)
-4. Shared persistence layer (raw + refined data backbone)
-5. Event messaging channel (RabbitMQ) for decoupled service collaboration
+1. Web app (stateless HTTP process)
+2. Data collector (scheduled ingestion from online sources)
+3. Data analyzer (aggregation/rollups)
+4. Shared persistence (raw inventory database)
+5. Event collaboration messaging (RabbitMQ producer/consumer)
 
-## 2. Whiteboard Architecture and Process Discussion
+## 2. Target Audience and Differentiation
+
+- **Audience**: classic Land Cruiser buyers, collectors, and enthusiasts.
+- **Problem solved**: manually tracking inventory signals across sources is repetitive and error-prone.
+- **Differentiation**: combines focused vehicle-domain ingestion, analysis rollups, operational monitoring, and asynchronous event collaboration in one deployable pipeline.
+
+## 3. High-Level Architecture
 
 ```text
-User
-  |
-  v
-Web App (Flask, stateless)
-  |
-  v
-SQLite/Post-process views
-  ^
-  |
-Analyzer ----------------------+
-  ^                            |
-  |                            |
-Collector (NHTSA API pull)     |
-  |                            |
-  +----> RabbitMQ event -----> Consumer/Downstream services
-  |
-  v
-raw_inventory table
+                     +------------------------------+
+                     |  External APIs (online)      |
+                     |  - NHTSA vPIC models         |
+                     |  - NHTSA recalls             |
+                     |  - FuelEconomy model menu    |
+                     +--------------+---------------+
+                                    |
+                                    v
+                     +------------------------------+
+Cron/Heroku Scheduler| Data Collector (independent) |
+-------------------->| scripts/fetch_inventory.py   |
+                     +--------------+---------------+
+                                    |
+                                    v
+                     +------------------------------+
+                     | SQLite raw_inventory         |
+                     | (shared persistence backbone)|
+                     +----+---------------------+---+
+                          |                     |
+                          v                     v
+               +--------------------+   +------------------------+
+               | Data Analyzer       |   | RabbitMQ Broker       |
+               | scripts/analyze...  |   | inventory_events      |
+               +--------------------+   +------------------------+
+                                                 |
+                                                 v
+                                       Event consumer/downstream
+
+                              +------------------------------+
+User/browser <--------------->| Web App (Flask, stateless)  |
+                              | /api/v1/inventory           |
+                              | /api/v1/summary             |
+                              | /health, /metrics           |
+                              +------------------------------+
 ```
 
-Process flow:
+### Process and Trigger Discussion
 
-1. Collector fetches Toyota model data from NHTSA vPIC and filters Land Cruiser records.
-2. Collector writes raw records into `raw_inventory`.
-3. Analyzer reads raw records and computes rollups such as per-year counts and average records.
-4. Collector optionally publishes an `inventory.collection.completed` event to RabbitMQ.
-5. Consumer services subscribe to the queue and react asynchronously (logging, notifications, future workflows).
-6. Web app serves user requests and can be deployed independently.
+1. **Collector trigger**: periodic schedule (cron or Heroku Scheduler) runs `scripts/fetch_inventory.py`.
+2. **Analyzer trigger**: can run on schedule (`scripts/analyze_data.py`) after collection.
+3. **Web app trigger**: user HTTP requests in real time.
+4. **Event trigger**: collector publishes `inventory.collection.completed` to RabbitMQ.
+5. Each process can run, fail, and scale independently.
 
-## 3. Design Decisions and Justifications
+## 4. Key Design Decisions and Trade-offs
 
-### Decision A: Request/Response for external data fetch
-The collector uses direct REST calls (`requests`) to NHTSA because collection requires explicit pull semantics and deterministic input windows by year.
+### Decision A: Multi-source online ingestion
+The collector fetches from multiple public online APIs (NHTSA models, NHTSA recalls, FuelEconomy model menu) instead of a single endpoint.
 
-### Decision B: Event Collaboration for cross-service notifications
-The system adds RabbitMQ event publication after each collection run. This follows the "announce, do not directly command" model from the final topic:
+- **Why**: improves coverage and resilience when one source is sparse or temporarily unavailable.
+- **Trade-off**: requires source-specific parsing and normalized persistence schema.
 
-1. Producer (collector) publishes completion events.
-2. Broker (RabbitMQ) buffers and routes messages.
-3. Consumers process events independently.
+### Decision B: Shared persistent data store
+All components write/read through `raw_inventory` in SQLite with an idempotent upsert key `(source, external_id, model_year)`.
 
-Why this decision:
+- **Why**: straightforward local setup and deterministic reproducibility for grading.
+- **Trade-off**: SQLite is not ideal for high write concurrency compared to managed Postgres.
 
-1. Reduces temporal coupling between collector and downstream actions.
-2. Improves extensibility (new consumers can be added without changing collector logic).
-3. Improves resilience during load spikes or temporary consumer downtime.
+### Decision C: Event collaboration via RabbitMQ
+Collector publishes completion events and consumers subscribe asynchronously.
 
-Trade-off acknowledged:
+- **Why**: decouples producer and consumers; enables extensibility and non-blocking downstream processing.
+- **Trade-off**: eventual consistency and additional operational moving parts.
 
-1. Event-driven systems introduce eventual consistency and more complex debugging.
-2. Correlation IDs and structured event payloads are required for traceability as the system grows.
+### Decision D: Operational observability in web tier
+The app exposes health and metrics endpoints (`/health`, `/metrics`) and request counters.
 
-### Decision C: SQLite for current scope
-SQLite was selected for a lightweight project footprint and fast local setup. Schema migrations are explicitly versioned for repeatability and testability.
+- **Why**: supports production monitoring and failure detection.
+- **Trade-off**: modest added implementation complexity.
 
-### Decision D: Stateless web app with health endpoint
-The web app remains stateless and includes a health endpoint to support production monitoring and safe deployment checks.
+### Decision E: CI/CD automation
+GitHub Actions workflows are included for CI tests and CD deploy flow to Heroku (secret-gated).
 
-## 4. System Requirements and Testability
+- **Why**: automates quality gates and repeatable releases.
+- **Trade-off**: requires secret management and platform setup.
 
-| Requirement | Type | Testability Method | Evidence |
-|---|---|---|---|
-| System fetches external vehicle data | Functional | Run collector and verify non-empty API fetch counts | Collector logs |
-| Raw data is persisted in DB | Functional | Query `raw_inventory` after collector run | DB query output |
-| Analysis computes rollups | Functional | Run analyzer and verify summary metrics output | Analyzer logs |
-| Web app accepts user input and responds | Functional | Integration test for `/echo` | pytest results |
-| Web app exposes service health | Operational | GET `/health` returns 200 + status payload | integration test + curl |
-| Collection can collaborate asynchronously | Architectural | Enable event publishing and consume queue messages | consumer output |
-| Duplicate raw inserts are controlled | Data integrity | Re-run collector and confirm inserts are ignored by unique key | insert count behavior |
+## 5. Requirements and Testability
 
-## 5. Deployment and Submission Artifacts
+### User Requirements
+1. User can view a web report of Land Cruiser inventory and filter by year/model text.
+2. User can access API endpoints for inventory and summary.
+3. User can verify the app is healthy and monitored in production.
 
-1. Deployed web URL: `https://csca5028-echo-mb-final-0313-6f06d76737c3.herokuapp.com/`
-2. Report file: this report (`FINAL_PROJECT_REPORT.md`) and DOCX version
-3. Source code ZIP: `csca5028-final-project-source-clean-20260313.zip`
+### System Requirements
+1. Collector must fetch data from external online APIs.
+2. Collector must store normalized raw records in shared persistence.
+3. Analyzer must compute rollup summaries.
+4. Event collaboration messaging must be supported through a broker.
+5. CI test automation must run on code changes.
+6. CD path must exist for production deployment.
 
-## 6. Conclusion
-The final system demonstrates a practical big-data-oriented architecture with clear process separation (collector, analyzer, web app), shared persistence, and event collaboration. The design balances implementation simplicity with scalable patterns by combining direct API retrieval for ingestion and asynchronous messaging for service-to-service collaboration.
+## 6. A-Level Rubric Traceability Matrix
+
+| A-Level Rubric Item | Implementation Evidence |
+|---|---|
+| Web application basic form + reporting | `csca5028-webapp-echo/templates/index.html` (interaction form + reporting table + summary cards) |
+| Data collection | `csca5028-land-cruiser-data-collection/scripts/fetch_inventory.py` |
+| Data analyzer | `csca5028-land-cruiser-data-collection/scripts/analyze_data.py` |
+| Unit tests | `csca5028-webapp-echo/tests/test_unit_input.py`, `csca5028-land-cruiser-data-collection/tests/test_fetch_inventory.py` |
+| Data persistence | `raw_inventory` schema and migrations (`migrations/001_create_raw_inventory.sql`) |
+| REST collaboration internal or API endpoint | Web app APIs: `/api/v1/inventory`, `/api/v1/summary` |
+| Product environment | Heroku deployment URL (public production host) |
+| Integration tests | `csca5028-webapp-echo/tests/test_integration_app.py` |
+| Mock objects / test doubles | Mocked summary test in `test_integration_app.py` and monkeypatched collector tests |
+| Continuous integration | `.github/workflows/ci.yml` |
+| Production monitoring instrumenting | `/health` and `/metrics` in `src/app.py` |
+| Event collaboration messaging | `collector/eventing.py`, `scripts/consume_inventory_events.py` |
+| Continuous delivery | `.github/workflows/cd.yml` (Heroku secret-gated deploy) |
+
+## 7. Validation Summary
+
+- Web app tests: **11 passed**.
+- Collector tests: **3 passed**.
+- Multi-source collection run verified with inserts and per-source counts.
+- Analyzer outputs total counts, year distribution, top models, and per-source distribution.
+- Deployed app exposes reporting UI and operational endpoints.
+
+## 8. Deployment and Submission Artifacts
+
+1. **Deployed URL**  
+   `https://csca5028-echo-mb-final-0313-6f06d76737c3.herokuapp.com/`
+
+2. **Report file**  
+   `csca5028_final_project_submission/output/doc/CSCA5028_Final_Project_Report.docx`
+
+3. **Source code zip**  
+   `csca5028-final-project-source-a-level-20260313.zip`
+
+## 9. Conclusion
+The final system demonstrates a complete, production-oriented architecture aligned to the course rubric: independent web/collector/analyzer processes, shared persistence, API exposure, monitoring instrumentation, automated tests, CI/CD workflows, and event collaboration messaging. This design is intentionally pragmatic for an academic capstone while still representing real distributed system patterns.
